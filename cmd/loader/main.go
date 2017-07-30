@@ -3,15 +3,14 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"net/http"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 
+	ponpon "github.com/PonPonLoader"
 	"github.com/PonPonLoader/definition"
 	"github.com/PonPonLoader/model"
 	"github.com/codegangsta/cli"
@@ -26,16 +25,16 @@ func main() {
 
 		thread, err := parseThreadURL(threadURL)
 		if err != nil {
-			panic(err)
+			return err
 		}
 
 		if err := createBaseDir(targetDir); err != nil {
-			panic(err)
+			return err
 		}
 
 		jsonThread, err := fetchThread(thread)
 		if err != nil {
-			panic(err)
+			return err
 		}
 
 		posts := genPostsFromThread(jsonThread)
@@ -49,7 +48,11 @@ func main() {
 		})
 
 		downloadTasks := mapPostsToImageDownloadTasks(imagePosts, targetDir)
-		executeDownloadTasks(downloadTasks)
+		processor, err := ponpon.NewTaskProcessor(downloadTasks)
+		if err != nil {
+			return err
+		}
+		processor.Run()
 
 		return nil
 	}
@@ -87,37 +90,6 @@ func parseThreadURL(threadURLString string) (*model.Thread, error) {
 		BoardName: boardName,
 	}, nil
 
-}
-
-func executeDownloadTasks(tasks <-chan *model.DownloadTask) {
-	const numDigesters = 3
-
-	var wg sync.WaitGroup
-	wg.Add(numDigesters)
-
-	for i := 0; i < numDigesters; i++ {
-		go func() {
-			for task := range tasks {
-				file, err := os.Create(task.Target)
-				if err != nil {
-					panic(err)
-				}
-				defer file.Close()
-
-				resp, err := http.Get(task.Source.String())
-				if err != nil {
-					panic(err)
-				}
-				defer resp.Body.Close()
-
-				if _, err := io.Copy(file, resp.Body); err != nil {
-					panic(err)
-				}
-			}
-			wg.Done()
-		}()
-	}
-	wg.Wait()
 }
 
 func fetchThread(thread *model.Thread) (*model.JSONThread, error) {
