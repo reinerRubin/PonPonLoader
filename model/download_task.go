@@ -12,6 +12,7 @@ import (
 type DownloadTask struct {
 	Source *url.URL
 	Target string
+	MD5    string
 }
 
 // NewDownloadTask TBD
@@ -39,5 +40,6 @@ func NewDownloadTask(post *Post, baseTargetPath string) (*DownloadTask, error) {
 	return &DownloadTask{
 		Source: imageURL,
 		Target: path.Join(baseTargetPath, pathForSave),
+		MD5:    post.MD5,
 	}, nil
 }
