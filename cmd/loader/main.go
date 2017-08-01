@@ -1,27 +1,36 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
-	"io/ioutil"
-	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 
 	ponpon "github.com/PonPonLoader"
-	"github.com/PonPonLoader/definition"
 	"github.com/PonPonLoader/model"
 	"github.com/codegangsta/cli"
 )
 
+var (
+	cliFlags = []cli.Flag{
+		cli.BoolFlag{
+			Name:  "watch",
+			Usage: "watch for new images from thread",
+		},
+	}
+)
+
 func main() {
 	app := cli.NewApp()
+	app.Flags = cliFlags
 
 	app.Action = func(c *cli.Context) error {
 		threadURL := c.Args().Get(0)
 		targetDir := c.Args().Get(1)
+		watch := c.Bool("watch")
 
 		thread, err := parseThreadURL(threadURL)
 		if err != nil {
@@ -32,12 +41,25 @@ func main() {
 			return err
 		}
 
-		jsonThread, err := fetchThread(thread)
-		if err != nil {
-			return err
-		}
+		posts := make(chan *model.Post)
 
-		posts := genPostsFromThread(jsonThread)
+		// Handle SIGINT and SIGTERM.
+		ch := make(chan os.Signal)
+		signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM)
+
+		threadWatcher := ponpon.NewThreadWatcher(posts, thread)
+		go func() {
+			<-ch
+			threadWatcher.Stop()
+		}()
+
+		go func() {
+			if err := threadWatcher.Run(!watch); err != nil {
+				panic(err)
+			}
+
+		}()
+
 		imagePosts := mapPosts(posts, func(p *model.Post) *model.Post {
 			if !p.HasImage() {
 				return nil
@@ -48,10 +70,12 @@ func main() {
 		})
 
 		downloadTasks := mapPostsToImageDownloadTasks(imagePosts, targetDir)
+
 		processor, err := ponpon.NewTaskProcessor(downloadTasks)
 		if err != nil {
 			return err
 		}
+
 		processor.Run()
 
 		return nil
@@ -92,31 +116,6 @@ func parseThreadURL(threadURLString string) (*model.Thread, error) {
 
 }
 
-func fetchThread(thread *model.Thread) (*model.JSONThread, error) {
-	URLString := fmt.Sprintf(
-		"%s/%s/thread/%d.json",
-		definition.APIHost, thread.BoardName, thread.No,
-	)
-
-	resp, err := http.Get(URLString)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	jsThread := &model.JSONThread{}
-	if err := json.Unmarshal(body, jsThread); err != nil {
-		return nil, err
-	}
-
-	return jsThread, nil
-}
-
 func mapPosts(posts <-chan *model.Post, f func(p *model.Post) *model.Post) <-chan *model.Post {
 	c := make(chan *model.Post)
 
@@ -144,18 +143,6 @@ func mapPostsToImageDownloadTasks(posts <-chan *model.Post, basePath string) <-c
 				continue
 			}
 			// TODO log this situation
-		}
-	}()
-	return c
-}
-
-func genPostsFromThread(jsThread *model.JSONThread) <-chan *model.Post {
-	c := make(chan *model.Post)
-	go func() {
-		defer close(c)
-
-		for _, post := range jsThread.ToPosts() {
-			c <- post
 		}
 	}()
 	return c
