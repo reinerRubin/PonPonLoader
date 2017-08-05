@@ -2,11 +2,6 @@ package ponpon
 
 import (
 	"fmt"
-	"io"
-	"math/rand"
-	"net/http"
-	"os"
-	"time"
 
 	"github.com/PonPonLoader/model"
 )
@@ -16,11 +11,6 @@ const (
 	capacity    = 10000
 	workersNum  = 3
 )
-
-func init() {
-	rand.Seed(time.Now().UTC().UnixNano())
-
-}
 
 // TaskProcessor TBD
 type TaskProcessor struct {
@@ -134,35 +124,22 @@ func (tp *TaskProcessor) processTask(task *taskToProcess) {
 }
 
 func (tp *TaskProcessor) runTaskConsumers() {
-	const workersNum = 3
-	for i := 0; i < workersNum; i++ {
-		go func() {
-			for task := range tp.plannedTasks {
-				file, err := os.Create(task.Target)
-				if err != nil {
-					tp.failedTasks <- task
-					continue
-				}
-				defer file.Close()
-
-				resp, err := http.Get(task.Source.String())
-				if err != nil {
-					tp.failedTasks <- task
-					continue
-				}
-				defer resp.Body.Close()
-
-				if _, err := io.Copy(file, resp.Body); err != nil {
-					tp.failedTasks <- task
-					continue
-				}
-
-				tp.readyTasks <- task
+	worker := func() {
+		for task := range tp.plannedTasks {
+			if err := task.Run(); err != nil {
+				tp.failedTasks <- task
+				continue
 			}
-		}()
+
+			tp.readyTasks <- task
+		}
+	}
+
+	for i := 0; i < workersNum; i++ {
+		go worker()
 	}
 }
 
 func (tp *TaskProcessor) taskKey(task *taskToProcess) string {
-	return task.Source.String() + "~~~" + task.Target
+	return task.Source.String() + "~8~" + task.Target
 }

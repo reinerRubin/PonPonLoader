@@ -2,7 +2,10 @@ package model
 
 import (
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
+	"os"
 	"path"
 
 	"github.com/PonPonLoader/definition"
@@ -42,4 +45,25 @@ func NewDownloadTask(post *Post, baseTargetPath string) (*DownloadTask, error) {
 		Target: path.Join(baseTargetPath, pathForSave),
 		MD5:    post.MD5,
 	}, nil
+}
+
+// Run TBD
+func (t *DownloadTask) Run() error {
+	file, err := os.Create(t.Target)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	resp, err := http.Get(t.Source.String())
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if _, err := io.Copy(file, resp.Body); err != nil {
+		return err
+	}
+
+	return nil
 }
