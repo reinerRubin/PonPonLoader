@@ -13,11 +13,13 @@ import (
 
 // ThreadWatcher TBD
 type ThreadWatcher struct {
-	thread   *model.Thread
-	outPosts chan<- *model.Post
-	done     chan struct{}
+	thread            *model.Thread
+	outPosts          chan<- *model.Post
+	done, doneConfirm chan struct{}
 
 	ticker <-chan time.Time
+
+	lastModeifedHeader string
 }
 
 // NewThreadWatcher TBD
@@ -25,34 +27,33 @@ func NewThreadWatcher(outPosts chan<- *model.Post, thread *model.Thread) *Thread
 	return &ThreadWatcher{
 		outPosts: outPosts,
 		thread:   thread,
-		done:     make(chan struct{}),
+
+		done:        make(chan struct{}),
+		doneConfirm: make(chan struct{}),
 	}
 }
 
 // Run TBD
 func (tw *ThreadWatcher) Run(once bool) error {
-	ticker := time.After(0 * time.Second)
+	tw.ticker = time.After(0)
 
 	defer func() {
 		close(tw.outPosts)
-		tw.done <- struct{}{}
+		tw.doneConfirm <- struct{}{}
 	}()
 
 	for firstIteration := true; ; {
 		select {
-		case <-ticker:
-			jsonThread, err := fetchThread(tw.thread)
+		case <-tw.ticker:
+			jsonThread, err := tw.fetchThread()
 			if err != nil {
 				return err
 			}
 
-			// 404 error
-			if jsonThread == nil {
-				return nil
-			}
-
-			for post := range genPostsFromThread(jsonThread) {
-				tw.outPosts <- post
+			if jsonThread != nil {
+				for _, post := range jsonThread.ToPosts() {
+					tw.outPosts <- post
+				}
 			}
 		case <-tw.done:
 			return nil
@@ -61,7 +62,7 @@ func (tw *ThreadWatcher) Run(once bool) error {
 		if !once && firstIteration {
 			firstIteration = false
 			// memory leak
-			ticker = time.Tick(definition.UpdateEverySeconds * time.Second)
+			tw.ticker = time.Tick(definition.UpdateEverySeconds * time.Second)
 		}
 
 		if once {
@@ -70,29 +71,55 @@ func (tw *ThreadWatcher) Run(once bool) error {
 	}
 }
 
-// Stop TBD
-func (tw *ThreadWatcher) Stop() {
+func (tw *ThreadWatcher) asyncStop() {
+	tw.ticker = nil
 	tw.done <- struct{}{}
-	<-tw.done
 }
 
-func fetchThread(thread *model.Thread) (*model.JSONThread, error) {
-	URLString := fmt.Sprintf(
-		"%s/%s/thread/%d.json",
-		definition.APIHost, thread.BoardName, thread.No,
-	)
+// Stop TBD
+func (tw *ThreadWatcher) Stop() {
+	tw.asyncStop()
+	<-tw.doneConfirm
+}
 
-	// TODO: add If-Modified-Since header
-	resp, err := http.Get(URLString)
+func (tw *ThreadWatcher) fetchThread() (*model.JSONThread, error) {
+	resp, err := tw.makeReq()
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
+	tw.lastModeifedHeader = resp.Header.Get("Last-Modified")
+
 	if resp.StatusCode == 404 {
+		tw.asyncStop()
 		return nil, nil
 	}
 
+	if resp.StatusCode == 304 {
+		return nil, nil
+	}
+
+	return tw.parseResponse(resp)
+}
+
+func (tw *ThreadWatcher) makeReq() (*http.Response, error) {
+	URLString := fmt.Sprintf("%s/%s", definition.APIHost, tw.thread.URLPath())
+
+	client := http.DefaultClient
+	req, err := http.NewRequest("GET", URLString, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if tw.lastModeifedHeader != "" {
+		req.Header.Add("If-Modified-Since", tw.lastModeifedHeader)
+	}
+
+	return client.Do(req)
+}
+
+func (tw *ThreadWatcher) parseResponse(resp *http.Response) (*model.JSONThread, error) {
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
@@ -104,16 +131,4 @@ func fetchThread(thread *model.Thread) (*model.JSONThread, error) {
 	}
 
 	return jsThread, nil
-}
-
-func genPostsFromThread(jsThread *model.JSONThread) <-chan *model.Post {
-	c := make(chan *model.Post)
-	go func() {
-		defer close(c)
-
-		for _, post := range jsThread.ToPosts() {
-			c <- post
-		}
-	}()
-	return c
 }

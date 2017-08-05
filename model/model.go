@@ -1,11 +1,48 @@
 package model
 
-import "fmt"
+import (
+	"fmt"
+	"net/url"
+	"strconv"
+	"strings"
+)
 
 // Thread TBD
 type Thread struct {
 	No        int64
 	BoardName string
+}
+
+// NewThreadFromURL TBD
+func NewThreadFromURL(threadURLString string) (*Thread, error) {
+	threadURL, err := url.Parse(threadURLString)
+	if err != nil {
+		return nil, err
+	}
+
+	paths := strings.Split(threadURL.Path, "/")
+	// /c/thread/2942063/madotsuki-thread'
+	if len(paths) < 3 {
+		return nil, fmt.Errorf("cant parse URL: %s", threadURLString)
+	}
+	boardName := paths[1]
+	boardNoStr := paths[3]
+
+	boardNo, err := strconv.ParseInt(boardNoStr, 10, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Thread{
+		No:        boardNo,
+		BoardName: boardName,
+	}, nil
+
+}
+
+// URLPath TBD
+func (th *Thread) URLPath() string {
+	return fmt.Sprintf("%s/thread/%d.json", th.BoardName, th.No)
 }
 
 // Post TBD
