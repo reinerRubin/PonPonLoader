@@ -1,7 +1,7 @@
 # /
 pon-pon-loader is an yet another 4chan thread image grabber in go.
 
-The main "feature" (lol) is the watch flag. So you can run downloader with watch flag and all images will be downloaded until 404.
+The main "feature" (lol) is a watch flag. So you can run the downloader with a watch flag and all images will be downloaded until 404.
 
 ## usage
 ### build
